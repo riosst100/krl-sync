@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KRL Sync</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1b1f24; --muted: #5f6b7a; --border: #dde2e8;
+    --accent: #c8102e; --accent-text: #ffffff; --ok: #1a7f37; --warn: #9a6700; --err: #cf222e;
+    --code: #eef1f4; --bar: #e6e9ee;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1216; --card: #171b21; --text: #e6e9ee; --muted: #9aa5b1; --border: #2a3039;
+      --accent: #e5484d; --accent-text: #ffffff; --ok: #3fb950; --warn: #d29922; --err: #f85149;
+      --code: #1f242c; --bar: #262c35;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+  h1 { font-size: 22px; margin: 0; }
+  h1 small { display: block; font-size: 13px; font-weight: 400; color: var(--muted); }
+  h2 { font-size: 16px; margin: 0 0 12px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .grid { display: grid; grid-template-columns: 160px 1fr; gap: 6px 12px; }
+  .grid dt { color: var(--muted); }
+  .grid dd { margin: 0; overflow-wrap: anywhere; }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+  input[type=text], input[type=password], input[type=number] {
+    width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg); color: var(--text); font: inherit;
+  }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+  .row > div { flex: 1 1 180px; }
+  .checks { display: flex; gap: 14px; flex-wrap: wrap; padding-top: 6px; }
+  .checks label { display: inline-flex; gap: 6px; align-items: center; color: var(--text); font-size: 14px; margin: 0; }
+  button {
+    padding: 8px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--card);
+    color: var(--text); font: inherit; cursor: pointer;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  button:disabled { opacity: .5; cursor: default; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; border: 1px solid currentColor; }
+  .ok { color: var(--ok); } .warn { color: var(--warn); } .err { color: var(--err); } .muted { color: var(--muted); }
+  .bar { height: 10px; background: var(--bar); border-radius: 999px; overflow: hidden; margin: 8px 0; }
+  .bar > div { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; margin: 12px 0; }
+  .stat { background: var(--code); border-radius: 6px; padding: 8px; }
+  .stat b { display: block; font-size: 18px; }
+  .stat span { font-size: 12px; color: var(--muted); }
+  pre { background: var(--code); border-radius: 6px; padding: 10px; margin: 0; max-height: 280px; overflow: auto; font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .hidden { display: none; }
+  @media (max-width: 560px) { .grid { grid-template-columns: 1fr; } .grid dt { margin-top: 6px; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>KRL Sync <small>KCI → api-krl (jalur cadangan via Vercel)</small></h1>
+    <button id="logout" class="hidden">Keluar</button>
+  </header>
+
+  <section id="login" class="card">
+    <h2>Masuk</h2>
+    <form id="login-form" class="row">
+      <div><label for="secret">CRON_SECRET</label><input id="secret" type="password" autocomplete="current-password" required></div>
+      <div style="flex:0 0 auto;align-self:flex-end"><button class="primary" type="submit">Masuk</button></div>
+    </form>
+    <p id="login-error" class="err hidden"></p>
+  </section>
+
+  <div id="app" class="hidden">
+    <section class="card">
+      <h2>Konfigurasi</h2>
+      <dl class="grid" id="info"><dt>Memuat…</dt><dd></dd></dl>
+    </section>
+
+    <section class="card">
+      <h2>Sync manual</h2>
+      <div class="row">
+        <div>
+          <label for="stations">Stasiun (kosong = ikut konfigurasi)</label>
+          <input id="stations" type="text" placeholder="THB,SUD">
+        </div>
+        <div>
+          <label for="limit">Batas kereta (opsional, untuk uji)</label>
+          <input id="limit" type="number" min="1" placeholder="semua">
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>Jenis data</label>
+          <div class="checks">
+            <label><input type="checkbox" name="type" value="stations" checked> Stasiun</label>
+            <label><input type="checkbox" name="type" value="schedules" checked> Jadwal</label>
+            <label><input type="checkbox" name="type" value="trains" checked> Pemberhentian kereta</label>
+          </div>
+        </div>
+        <div>
+          <label>Mode</label>
+          <div class="checks"><label><input type="checkbox" id="dry"> Dry run (ambil dari KCI saja, tidak dikirim)</label></div>
+        </div>
+      </div>
+      <div class="actions">
+        <button id="run" class="primary">Sync sekarang</button>
+        <button id="check">Cek koneksi KCI</button>
+        <button id="stop" class="hidden">Hentikan</button>
+      </div>
+    </section>
+
+    <section id="progress" class="card hidden">
+      <h2>Progres <span id="status-badge"></span></h2>
+      <div class="muted" id="phase"></div>
+      <div class="bar"><div id="bar"></div></div>
+      <div class="stats" id="stats"></div>
+      <p id="error" class="err hidden"></p>
+      <label>Log</label>
+      <pre id="log"></pre>
+    </section>
+  </div>
+</main>
+
+<script>
+const API = "/api/sync";
+const BUDGET = 25; // seconds of work per manual step
+const PHASES = {
+  stations: "Mengambil daftar stasiun dari KCI",
+  schedules: "Mengambil jadwal dari KCI",
+  stops: "Mengambil pemberhentian kereta dari KCI",
+  finish: "Menutup run di api-krl",
+  done: "Selesai",
+};
+const STATUS = {
+  success: ["Berhasil", "ok"], partial: ["Sebagian", "warn"], failed: ["Gagal", "err"],
+  skipped: ["Dilewati", "warn"], running: ["Berjalan", "muted"],
+};
+
+const $ = (id) => document.getElementById(id);
+let secret = "";
+let running = false;
+let stopRequested = false;
+
+function store(value) {
+  try { value ? sessionStorage.setItem("krl-sync-secret", value) : sessionStorage.removeItem("krl-sync-secret"); } catch {}
+}
+function stored() {
+  try { return sessionStorage.getItem("krl-sync-secret") || ""; } catch { return ""; }
+}
+
+async function api(query = "", body = null) {
+  const res = await fetch(API + query, {
+    method: body ? "POST" : "GET",
+    headers: { Authorization: `Bearer ${secret}`, ...(body ? { "Content-Type": "application/json" } : {}) },
+    body: body ? JSON.stringify(body) : null,
+  });
+  let data = {};
+  try { data = await res.json(); } catch { data = { error: `HTTP ${res.status}` }; }
+  if (res.status === 401) throw Object.assign(new Error("CRON_SECRET salah."), { auth: true });
+  if (!res.ok && !data.phase) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
+
+function esc(text) {
+  return String(text ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+function cronToWib(expr) {
+  const m = /^(\d+) (\d+) \* \* \*$/.exec(expr || "");
+  if (!m) return expr ? `${expr} (UTC)` : "-";
+  const h = (Number(m[2]) + 7) % 24;
+  return `Setiap hari ${String(h).padStart(2, "0")}:${m[1].padStart(2, "0")} WIB`;
+}
+
+async function loadInfo() {
+  const i = await api("?info=1");
+  const source = i.stations_source === "krl-app"
+    ? '<span class="badge ok">setting admin krl-app</span>'
+    : `<span class="badge warn">env KCI_SYNC_STATIONS</span> <span class="muted">${esc(i.settings_error || "")}</span>`;
+  const stations = i.stations.length ? i.stations.join(", ") : "semua stasiun aktif di KCI";
+  $("stations").placeholder = i.stations.join(",") || "semua";
+  $("info").innerHTML = `
+    <dt>Stasiun</dt><dd>${esc(stations)} ${source}</dd>
+    <dt>Sync otomatis</dt><dd>${i.auto_sync ? '<span class="badge ok">Aktif</span>' : '<span class="badge warn">Mati</span>'}
+      ${esc(cronToWib(i.cron_schedule_utc))}</dd>
+    <dt>Jenis data</dt><dd>${esc(i.types.join(", "))}</dd>
+    <dt>Tujuan</dt><dd>${esc(i.ingest_url)} ${i.ingest_ready ? "" : '<span class="badge err">INGEST_TOKEN kosong</span>'}</dd>
+    <dt>Sumber KCI</dt><dd class="muted">${esc(i.kci.schedules)}</dd>`;
+}
+
+function log(line) {
+  const time = new Date().toLocaleTimeString("id-ID");
+  $("log").textContent += `[${time}] ${line}\n`;
+  $("log").scrollTop = $("log").scrollHeight;
+}
+
+function show(r) {
+  $("progress").classList.remove("hidden");
+  $("bar").style.width = `${r.percent ?? 0}%`;
+  $("phase").textContent = `${PHASES[r.phase] || r.phase} · stasiun ${r.progress.stations} · kereta ${r.progress.trains}`
+    + (r.dry ? " · dry run" : "") + (r.run_id ? ` · run #${r.run_id}` : "");
+  const [label, cls] = STATUS[r.status || "running"] || [r.status, "muted"];
+  $("status-badge").innerHTML = `<span class="badge ${cls}">${esc(label)}</span>`;
+  const s = r.stats;
+  $("stats").innerHTML = [
+    [s.stations, "stasiun dikirim"], [s.stations_ok, "stasiun OK"], [s.schedules, "jadwal"],
+    [`${s.trains_ok}/${s.trains}`, "kereta OK"], [s.stops, "pemberhentian"], [s.kci_requests, "request KCI"],
+  ].map(([v, k]) => `<div class="stat"><b>${esc(v)}</b><span>${k}</span></div>`).join("");
+  const failures = [...Object.entries(r.failed_stations || {}), ...Object.entries(r.failed_trains || {})];
+  const error = [r.error, ...failures.slice(0, 3).map(([k, v]) => `${k}: ${v}`)].filter(Boolean).join("\n");
+  $("error").textContent = error;
+  $("error").classList.toggle("hidden", !error);
+}
+
+function setRunning(on) {
+  running = on;
+  $("run").disabled = on;
+  $("check").disabled = on;
+  $("stop").classList.toggle("hidden", !on);
+  $("stop").disabled = false;
+}
+
+async function runSync() {
+  const types = [...document.querySelectorAll("input[name=type]:checked")].map((c) => c.value);
+  if (!types.length) return alert("Pilih minimal satu jenis data.");
+
+  const params = new URLSearchParams({ chain: "0", budget: String(BUDGET), types: types.join(",") });
+  if ($("stations").value.trim()) params.set("stations", $("stations").value.trim());
+  if ($("limit").value) params.set("limit_trains", $("limit").value);
+  if ($("dry").checked) params.set("dry", "1");
+
+  setRunning(true);
+  stopRequested = false;
+  $("log").textContent = "";
+  log(`Mulai sync${$("dry").checked ? " (dry run)" : ""}: ${types.join(", ")}`);
+
+  try {
+    let r = await api("?" + params);
+    let step = 1;
+    for (;;) {
+      show(r);
+      log(`Langkah ${step}: ${PHASES[r.phase] || r.phase} · stasiun ${r.progress.stations} · kereta ${r.progress.trains}`);
+      if (r.phase === "done" || !r.state) break;
+      if (stopRequested) {
+        log("Menghentikan run…");
+        r = await api("", { state: r.state, abort: true });
+        show(r);
+        break;
+      }
+      r = await api("", { state: r.state, chain: false, budget: BUDGET });
+      step++;
+    }
+    log(`Selesai: ${r.status}${r.error ? " — " + r.error : ""}`);
+  } catch (e) {
+    log(`Error: ${e.message}`);
+    $("error").textContent = e.message;
+    $("error").classList.remove("hidden");
+    if (e.auth) logout();
+  } finally {
+    setRunning(false);
+  }
+}
+
+async function runCheck() {
+  setRunning(true);
+  $("stop").classList.add("hidden");
+  $("progress").classList.remove("hidden");
+  $("log").textContent = "";
+  log("Cek koneksi ke KCI dari Vercel…");
+  try {
+    const r = await api("?check=1" + ($("stations").value.trim() ? "&station=" + encodeURIComponent($("stations").value.split(",")[0].trim()) : ""));
+    for (const name of ["stations", "schedules"]) {
+      const x = r[name];
+      log(`${name}: ${x.ok ? `OK (${x.count} data)` : `GAGAL${x.blocked ? " — diblokir Cloudflare" : ""}: ${x.error}`}`);
+    }
+    $("status-badge").innerHTML = r.ok ? '<span class="badge ok">KCI bisa diakses</span>' : '<span class="badge err">KCI tidak bisa diakses</span>';
+  } catch (e) {
+    log(`Error: ${e.message}`);
+    if (e.auth) logout();
+  } finally {
+    setRunning(false);
+  }
+}
+
+async function login(value) {
+  secret = value;
+  try {
+    await loadInfo();
+    store(value);
+    $("login").classList.add("hidden");
+    $("app").classList.remove("hidden");
+    $("logout").classList.remove("hidden");
+  } catch (e) {
+    secret = "";
+    store("");
+    $("login-error").textContent = e.message;
+    $("login-error").classList.remove("hidden");
+  }
+}
+
+function logout() {
+  secret = "";
+  store("");
+  $("app").classList.add("hidden");
+  $("logout").classList.add("hidden");
+  $("login").classList.remove("hidden");
+}
+
+$("login-form").addEventListener("submit", (e) => { e.preventDefault(); login($("secret").value); });
+$("logout").addEventListener("click", logout);
+$("run").addEventListener("click", runSync);
+$("check").addEventListener("click", runCheck);
+$("stop").addEventListener("click", () => { stopRequested = true; $("stop").disabled = true; log("Akan dihentikan setelah langkah ini selesai…"); });
+window.addEventListener("beforeunload", (e) => { if (running) { e.preventDefault(); e.returnValue = ""; } });
+
+if (stored()) login(stored());
+</script>
+</body>
+</html>
