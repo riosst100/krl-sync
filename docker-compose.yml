@@ -1,0 +1,16 @@
+services:
+  sync:
+    build: .
+    restart: unless-stopped
+    ports:
+      # Bound to localhost, like the other projects in ~/projects.
+      - "127.0.0.1:${SYNC_PORT:-3500}:8000"
+    env_file: .env
+    environment:
+      # Chained steps call this container itself (Vercel uses its production URL).
+      SELF_URL: http://localhost:8000
+      # Open page without CRON_SECRET (safe only while the port stays on 127.0.0.1).
+      NO_AUTH: "true"
+    volumes:
+      # Live code: restart the container to pick up changes.
+      - .:/app

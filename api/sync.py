@@ -23,7 +23,7 @@ from urllib.parse import parse_qs, urlsplit
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from krl_sync import app  # noqa: E402
+from krl_sync import app as sync_app  # noqa: E402
 from krl_sync.config import Config  # noqa: E402
 
 
@@ -33,20 +33,20 @@ class handler(BaseHTTPRequestHandler):
         if not self.allowed(config):
             return
         cron = "vercel-cron" in (self.headers.get("User-Agent") or "")
-        self.respond(*app.start(config, parse_qs(urlsplit(self.path).query), cron=cron))
+        self.respond(*sync_app.start(config, parse_qs(urlsplit(self.path).query), cron=cron))
 
     def do_POST(self):
         config = Config.from_env()
         if not self.allowed(config):
             return
         length = int(self.headers.get("Content-Length") or 0)
-        self.respond(*app.resume(config, self.rfile.read(length)))
+        self.respond(*sync_app.resume(config, self.rfile.read(length)))
 
     def allowed(self, config) -> bool:
         if not config.cron_secret:
             self.respond(500, {"error": "CRON_SECRET is not set"})
             return False
-        if not app.authorized(config, self.headers.get("Authorization")):
+        if not sync_app.authorized(config, self.headers.get("Authorization")):
             self.respond(401, {"error": "unauthorized"})
             return False
         return True

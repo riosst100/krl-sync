@@ -138,6 +138,18 @@ cp .env.example .env                                        # isi INGEST_TOKEN d
 .venv/bin/python -m pytest
 ```
 
+### Docker (lokal)
+
+```bash
+cp .env.example .env          # isi INGEST_TOKEN dst.
+docker compose up -d --build  # http://localhost:3500
+docker compose exec sync python -m pytest
+```
+
+`docker/server.py` meniru routing Vercel (`/` → `index.html`, `/api/sync` → handler).
+Compose memasang `NO_AUTH=true`, jadi halaman langsung terbuka tanpa `CRON_SECRET`. Ini
+aman selama port tetap terikat ke `127.0.0.1`. Vercel Cron tidak ikut jalan di Docker.
+
 `python -m krl_sync` menjalankan satu run penuh dalam satu proses. Cara ini juga bisa
 dipakai sebagai cadangan lain (mis. GitHub Actions terjadwal) kalau rantai invocation
 Vercel bermasalah.

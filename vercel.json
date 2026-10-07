@@ -1,6 +1,9 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "regions": ["sin1"],
+  "framework": null,
+  "regions": [
+    "sin1"
+  ],
   "functions": {
     "api/sync.py": {
       "maxDuration": 300,
@@ -8,6 +11,9 @@
     }
   },
   "crons": [
-    { "path": "/api/sync", "schedule": "30 17 * * *" }
+    {
+      "path": "/api/sync",
+      "schedule": "30 17 * * *"
+    }
   ]
 }

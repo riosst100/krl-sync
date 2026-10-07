@@ -2,3 +2,7 @@
 tests
 .pytest_cache
 .env
+docker
+Dockerfile
+docker-compose.yml
+.dockerignore
