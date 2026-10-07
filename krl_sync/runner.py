@@ -157,7 +157,6 @@ class Runner:
             self.log(f"schedules of {code} rejected: {e}")
 
         state["si"] += 1
-        self.pause()
 
     def phase_stops(self, state: dict) -> None:
         stats = state["stats"]
@@ -182,7 +181,6 @@ class Runner:
         for train, payload in self.kci.fetch_many(urls, token, concurrency).items():
             try:
                 if isinstance(payload, KciError):
-                    self.pause()
                     payload = self.kci.fetch(urls[train], token)
                 trains.append({"train_number": train, "stops": parse_stops(payload, train)})
             except KciBlocked:
@@ -196,7 +194,6 @@ class Runner:
             stats["trains_ok"] += len(trains)
 
         state["ti"] += len(chunk)
-        self.pause()
 
     def phase_finish(self, state: dict) -> None:
         stats = state["stats"]
@@ -217,11 +214,6 @@ class Runner:
         error = " ".join(problems) or None
         self.ingest.finish(state["run_id"], state["date"], status, state["stations"], error)
         state.update(phase="done", status=status, error=error)
-
-    def pause(self) -> None:
-        if self.config.request_delay_ms > 0:
-            self.sleep(self.config.request_delay_ms / 1000)
-
 
 def percent(state: dict) -> int:
     """Rough overall progress: schedules up to 30 %, train stops up to 98 %."""

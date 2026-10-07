@@ -5,6 +5,9 @@ sidecar in one:
 - Cloudflare in front of kci.id blocks clients by their TLS/HTTP2 fingerprint,
   so requests go through curl_cffi with a browser fingerprint (KCI_IMPERSONATE,
   then the chrome -> safari -> firefox fallbacks on a block).
+- Requests are paced like someone browsing: one at a time, a random wait
+  between them (KCI_REQUEST_DELAY_MS, default 3-8 s) and every 20-40 requests
+  a random 30-90 s break (KCI_BREAK_EVERY, KCI_BREAK_SECONDS).
 - The KCI web API is rate limited (x-ratelimit-limit: 60): HTTP 429 is retried
   after Retry-After (max 2 retries), batches pause when X-RateLimit-Remaining
   gets low.
@@ -13,8 +16,12 @@ sidecar in one:
 """
 
 import json
+import random
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+
+from .config import as_range
 
 from curl_cffi import requests
 from curl_cffi.requests.exceptions import RequestException
@@ -44,11 +51,59 @@ def is_blocked(response) -> bool:
     return "json" not in response.headers.get("content-type", "")
 
 
+class Pacer:
+    """
+    Spaces requests out at random, like a person clicking through timetables.
+    A long break is skipped when it would not end before `not_after` (a
+    monotonic time), so a Vercel invocation still hands over in time.
+    """
+
+    def __init__(self, config, log=print, sleep=time.sleep, clock=time.monotonic, rng=None):
+        self.delay = as_range(config.request_delay_ms)
+        self.every = as_range(config.break_every)
+        self.seconds = as_range(config.break_seconds)
+        self.log = log
+        self.sleep = sleep
+        self.clock = clock
+        self.rng = rng or random.Random()
+        self.not_after = None
+        self.last = None
+        self.lock = threading.Lock()
+        self.until_break = self.next_break()
+
+    def next_break(self) -> int:
+        return self.rng.randint(*self.every) if self.every[1] > 0 and self.seconds[1] > 0 else -1
+
+    def wait(self) -> None:
+        """Called before every request; the lock keeps requests one after another."""
+        with self.lock:
+            if self.last is not None:
+                wait = self.rng.uniform(*self.delay) / 1000
+
+                if self.until_break == 0:
+                    pause = self.rng.uniform(*self.seconds)
+                    if self.not_after is None or self.clock() + pause < self.not_after:
+                        self.log(f"pause {pause:.0f}s")
+                        wait = max(wait, pause)
+                        self.until_break = self.next_break()
+
+                wait -= self.clock() - self.last
+                if wait > 0:
+                    self.sleep(wait)
+
+            if self.until_break > 0:
+                self.until_break -= 1
+
+    def done(self) -> None:
+        self.last = self.clock()
+
+
 class KciClient:
-    def __init__(self, config, log=print, sleep=time.sleep):
+    def __init__(self, config, log=print, sleep=time.sleep, pacer=None):
         self.config = config
         self.log = log
         self.sleep = sleep
+        self.pacer = pacer or Pacer(config, log, sleep)
         self.requests = 0
 
     def profiles(self) -> list[str]:
@@ -67,6 +122,7 @@ class KciClient:
 
         blocked = None
         for profile in self.profiles():
+            self.pacer.wait()
             started = time.monotonic()
             try:
                 response = requests.get(url, headers=headers, impersonate=profile, timeout=self.config.timeout, allow_redirects=False)
@@ -75,6 +131,7 @@ class KciClient:
                 raise KciError(f"cannot connect to {url}: {e}") from e
             finally:
                 self.requests += 1
+                self.pacer.done()
 
             cf_ray = response.headers.get("cf-ray") or "-"
             if not is_blocked(response):
@@ -105,12 +162,10 @@ class KciClient:
         """
         results = {}
         keys = list(urls)
-        delay = self.config.request_delay_ms / 1000
 
+        # The pacer spaces the requests out (see Pacer).
         for i in range(0, len(keys), concurrency):
             batch = keys[i:i + concurrency]
-            if i > 0 and delay > 0:
-                self.sleep(delay)
 
             with ThreadPoolExecutor(max_workers=len(batch)) as pool:
                 futures = {key: pool.submit(self.get, urls[key], token) for key in batch}

@@ -58,6 +58,20 @@ Port langsung dari backend krl-app, dengan aturan yang sama:
 
 Nama variabel `KCI_*` dan nilai default-nya sama dengan `backend/config/kci.php`.
 
+## Jeda antar request (anti-blokir)
+
+Request ke KCI dibuat mirip orang yang sedang browsing:
+
+- **satu per satu**, tidak paralel (`KCI_TRAIN_STOPS_CONCURRENCY=1`);
+- **jeda acak 3–8 detik** antar request (`KCI_REQUEST_DELAY_MS=3000-8000`), dihitung dari
+  selesainya request sebelumnya;
+- **istirahat acak 30–90 detik** setiap 20–40 request (`KCI_BREAK_EVERY`, `KCI_BREAK_SECONDS`).
+  Istirahat dilewati kalau tidak selesai sebelum batas waktu invocation.
+
+Rata-ratanya sekitar 5 request per menit, jauh di bawah batas KCI (60 per menit). Jeda
+tetap 1 menit tidak dipakai karena terlalu lambat: THB saja punya 360 kereta (6 jam).
+Dengan pengaturan ini, THB selesai sekitar 1–1,5 jam dan semua stasiun sekitar 4–5 jam.
+
 ## Batas waktu Vercel: run dipecah
 
 Satu sync bisa makan waktu lama. Di Tanah Abang saja ada 360 kereta, KCI butuh 3–7 detik
@@ -68,7 +82,7 @@ invocation Vercel, jadi satu run adalah state machine:
 stations → schedules (1 stasiun per unit) → stops (8 kereta per unit) → finish → done
 ```
 
-Setiap invocation bekerja selama `SYNC_TIME_BUDGET_SECONDS` (default 180 detik). Kalau
+Setiap invocation bekerja selama `SYNC_TIME_BUDGET_SECONDS` (default 150 detik). Kalau
 belum selesai, ia mengirim state-nya (JSON) dengan `POST /api/sync` ke invocation
 berikutnya, lalu berhenti menunggu setelah 10 detik. Invocation berikutnya tetap jalan
 dan melanjutkan dari titik yang sama. Progres tiap langkah terlihat di **Vercel → Logs**

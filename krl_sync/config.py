@@ -23,6 +23,20 @@ def env_int(name: str, default: int) -> int:
     return int(value) if value.lstrip("-").isdigit() else default
 
 
+def env_range(name: str, default: tuple[int, int]) -> tuple[int, int]:
+    """ "3000-8000" -> (3000, 8000), "1000" -> (1000, 1000), "0" = off """
+    value = env(name).replace(" ", "")
+    low, _, high = value.partition("-")
+    if not low.isdigit() or (high and not high.isdigit()):
+        return default
+    return as_range((int(low), int(high or low)))
+
+
+def as_range(value) -> tuple[int, int]:
+    low, high = (value, value) if isinstance(value, int) else value
+    return (max(0, low), max(0, low, high))
+
+
 def codes(value: str) -> list[str]:
     """ "thb, sud,THB" -> ["THB", "SUD"] """
     seen = []
@@ -53,8 +67,14 @@ class Config:
     train_stops_api_token: str = ""
 
     timeout: int = 20
-    request_delay_ms: int = 1000
-    train_stops_concurrency: int = 2
+    # Pacing, so the run looks like someone browsing instead of a scraper:
+    # a random wait between requests (from the end of the previous one), and
+    # every few requests a longer random break. Ranges are (min, max); 0 = off.
+    request_delay_ms: tuple[int, int] = (3000, 8000)
+    break_every: tuple[int, int] = (20, 40)
+    break_seconds: tuple[int, int] = (30, 90)
+    # One request at a time: a browser does not open two timetables at once.
+    train_stops_concurrency: int = 1
     rate_limit_pause_seconds: int = 30
     impersonate: str = "chrome"
 
@@ -73,7 +93,7 @@ class Config:
     # this deployment's public URL, and the working time per invocation.
     cron_secret: str = ""
     self_url: str = ""
-    time_budget_seconds: int = 180
+    time_budget_seconds: int = 150
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -88,7 +108,9 @@ class Config:
             train_stops_api_url=env("KCI_TRAIN_STOPS_API_URL", d.train_stops_api_url),
             train_stops_api_token=env("KCI_TRAIN_STOPS_API_TOKEN"),
             timeout=env_int("KCI_TIMEOUT", d.timeout),
-            request_delay_ms=env_int("KCI_REQUEST_DELAY_MS", d.request_delay_ms),
+            request_delay_ms=env_range("KCI_REQUEST_DELAY_MS", d.request_delay_ms),
+            break_every=env_range("KCI_BREAK_EVERY", d.break_every),
+            break_seconds=env_range("KCI_BREAK_SECONDS", d.break_seconds),
             train_stops_concurrency=max(1, env_int("KCI_TRAIN_STOPS_CONCURRENCY", d.train_stops_concurrency)),
             rate_limit_pause_seconds=env_int("KCI_RATE_LIMIT_PAUSE_SECONDS", d.rate_limit_pause_seconds),
             impersonate=env("KCI_IMPERSONATE", d.impersonate) or d.impersonate,

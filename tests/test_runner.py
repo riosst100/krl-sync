@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from krl_sync.config import Config
 from krl_sync.ingest import IngestConflict, IngestError
-from krl_sync.kci import KciBlocked, KciClient, KciError
+from krl_sync.kci import KciBlocked, KciClient, KciError, Pacer
 from krl_sync.runner import Runner, new_state
 
 STATIONS = {"status": 200, "data": [
@@ -25,6 +25,7 @@ class FakeKci:
         self.routes = routes
         self.requests = 0
         self.calls = []
+        self.pacer = SimpleNamespace(not_after=None)
 
     def answer(self, url):
         self.requests += 1
@@ -83,7 +84,7 @@ class FakeIngest:
 
 
 def config(**overrides):
-    return Config(request_delay_ms=0, **overrides)
+    return Config(**{"request_delay_ms": 0, **overrides})
 
 
 def stops_for(url):
@@ -175,7 +176,7 @@ def test_station_list_failure_with_configured_stations_continues():
 def test_early_stop_when_no_train_works():
     trains = [schedule(str(2000 + i)) for i in range(30)]
     routes = {**ROUTES, "stationid=THB": {"status": 200, "data": trains}, "trainid=": KciError("HTTP 500")}
-    state, calls = run(routes, stations=["THB"])
+    state, calls = run(routes, cfg=config(train_stops_concurrency=2), stations=["THB"])
 
     assert state["status"] == "partial"
     # Chunks of 8 (concurrency 2 * 4): stops after the 2nd chunk (16 failures >= 10).
@@ -226,3 +227,60 @@ def test_kci_cloudflare_detection():
     assert is_blocked(response(200, {"cf-mitigated": "challenge"}))
     assert not is_blocked(response(403, {"content-type": "application/json"}))
     assert not is_blocked(response(404, {"content-type": "text/html"}))
+
+
+class FakeTime:
+    def __init__(self):
+        self.now = 0.0
+        self.slept = []
+
+    def clock(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.slept.append(seconds)
+        self.now += seconds
+
+
+def pacer(clock, **overrides):
+    import random
+
+    cfg = config(**{"request_delay_ms": (3000, 8000), "break_every": (3, 3), "break_seconds": (30, 90), **overrides})
+    return Pacer(cfg, log=lambda m: None, sleep=clock.sleep, clock=clock.clock, rng=random.Random(1))
+
+
+def requests_through(p, clock, n, between=0.0):
+    for _ in range(n):
+        p.wait()
+        p.done()
+        clock.now += between  # other work after the request (e.g. sending to api-krl)
+
+
+def test_pacer_waits_a_random_3_to_8_seconds_and_breaks_every_few_requests():
+    clock = FakeTime()
+    p = pacer(clock)
+    requests_through(p, clock, 8)
+
+    waits = [round(s, 3) for s in clock.slept]
+    assert len(waits) == 7, "no wait before the first request"
+    breaks = [w for w in waits if w >= 30]
+    assert len(breaks) == 2 and all(w <= 90 for w in breaks), "a break after every 3 requests"
+    assert all(3 <= w <= 8 for w in waits if w < 30)
+    assert len(set(waits)) == len(waits), "the waits vary"
+
+
+def test_pacer_counts_other_work_and_skips_a_break_past_the_deadline():
+    clock = FakeTime()
+    p = pacer(clock, request_delay_ms=(5000, 5000), break_every=(1, 1))
+    p.not_after = 20  # a 30-90 s break cannot end before this
+    requests_through(p, clock, 3, between=2.0)
+
+    # 5 s from the end of the previous request, 2 s of which went to other work; no break.
+    assert clock.slept == [3.0, 3.0]
+
+
+def test_pacer_off():
+    clock = FakeTime()
+    p = pacer(clock, request_delay_ms=0, break_seconds=0)
+    requests_through(p, clock, 5)
+    assert clock.slept == []

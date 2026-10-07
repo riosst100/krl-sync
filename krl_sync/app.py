@@ -169,7 +169,10 @@ def work(config, state: dict, chain: bool = True, budget: str = "") -> tuple[int
     except IngestError as e:
         return 500, {"error": str(e)}
 
-    state = Runner(config, KciClient(config, log), ingest, log).run(state, deadline)
+    kci = KciClient(config, log)
+    # A long break may run past the budget a little, never into Vercel's 300 s limit.
+    kci.pacer.not_after = deadline + 30
+    state = Runner(config, kci, ingest, log).run(state, deadline)
     result = summary(state)
 
     if state["phase"] != "done":
