@@ -19,8 +19,8 @@ import urllib.request
 
 from . import config as cfg_module
 from .ingest import DryIngest, IngestClient, IngestError
-from .kci import KciClient, KciError
-from .parse import parse_schedules, parse_stations, url_for
+from .kci import KciBlocked, KciClient, KciError
+from .parse import parse_schedules, parse_stations, parse_stops, url_for
 from .runner import Runner, new_state, summary
 
 # How long to wait for the next invocation to accept the hand-off. It keeps
@@ -34,8 +34,10 @@ def log(message: str) -> None:
     print(f"[krl-sync] {message}", flush=True)
 
 
-def authorized(config, header: str | None) -> bool:
-    return bool(config.cron_secret) and hmac.compare_digest(header or "", f"Bearer {config.cron_secret}")
+def authorized(config, header: str | None, ingest_token_too: bool = False) -> bool:
+    """CRON_SECRET; for a single train lookup krl-app's INGEST_TOKEN is accepted as well."""
+    secrets = [config.cron_secret, config.ingest_token if ingest_token_too else ""]
+    return any(s and hmac.compare_digest(header or "", f"Bearer {s}") for s in secrets)
 
 
 def remote_settings(config) -> dict:
@@ -106,9 +108,12 @@ def start(config, query: dict, cron: bool = False) -> tuple[int, dict]:
     ?chain=0 &budget=N                         manual: return the state instead of continuing
     ?background=1                              manual: return once the run is open, it goes on by itself
     ?status=1                                  the receiver's latest run and its progress
+    ?train=5701C                               one train's stops, for krl-app's on-demand lookup
     """
     first = lambda name: (query.get(name) or [""])[0].strip()
 
+    if first("train"):
+        return train_stops(config, first("train"))
     if first("info") in ("1", "true"):
         return 200, info(config)
     if first("status") in ("1", "true"):
@@ -237,6 +242,27 @@ def continue_run(config, state: dict) -> str:
         if isinstance(e.reason, TimeoutError):
             return "next invocation started"
         return f"next invocation failed: {e.reason}"
+
+
+def train_stops(config, train: str) -> tuple[int, dict]:
+    """
+    One train's stops from KCI, nothing is sent: krl-app asks when a train's
+    detail is opened and stores the answer (its server cannot reach KCI).
+    """
+    train = train.upper()
+    if not train.isalnum() or len(train) > 20:
+        return 400, {"error": "invalid train number"}
+
+    kci = KciClient(config, log)
+    try:
+        url = url_for(config.train_stops_api_url, "trainid", "{train}", train)
+        stops = parse_stops(kci.fetch(url, config.train_stops_api_token), train)
+    except KciBlocked as e:
+        return 503, {"error": str(e), "blocked": True}
+    except KciError as e:
+        return 502, {"error": str(e)}
+
+    return 200, {"train_number": train, "stops": stops}
 
 
 def check(config, station: str) -> dict:

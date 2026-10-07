@@ -90,7 +90,7 @@ class FakeIngest:
 
 
 def config(**overrides):
-    return Config(**{"request_delay_ms": 0, **overrides})
+    return Config(**{"request_delay_ms": 0, "sync_types": ["stations", "schedules", "trains"], **overrides})
 
 
 def stops_for(url):
@@ -308,3 +308,7 @@ def test_a_run_stopped_on_the_receiver_ends_without_closing_it_again():
 
     assert state["phase"] == "done" and state["status"] == "failed"
     assert not [c for c in calls if c[0] == "finish"], "the receiver already closed it"
+
+
+def test_daily_sync_leaves_train_stops_to_the_on_demand_lookup():
+    assert Config().sync_types == ["stations", "schedules"]

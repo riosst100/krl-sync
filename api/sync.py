@@ -9,6 +9,7 @@ Vercel function /api/sync
          ?stations=THB,SUD          which stations (default KCI_SYNC_STATIONS)
          ?limit_trains=10           only the first N trains (testing)
          ?check=1[&station=THB]     test whether this deployment can reach KCI
+         ?train=5701C               one train's stops (krl-app's on-demand lookup; INGEST_TOKEN works too)
     POST {"state": {...}}           continue a run (previous invocation, or the web page with
                                     "chain": false, "budget": N; "abort": true stops it)
 
@@ -30,10 +31,11 @@ from krl_sync.config import Config  # noqa: E402
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         config = Config.from_env()
-        if not self.allowed(config):
+        query = parse_qs(urlsplit(self.path).query)
+        if not self.allowed(config, train="train" in query):
             return
         cron = "vercel-cron" in (self.headers.get("User-Agent") or "")
-        self.respond(*sync_app.start(config, parse_qs(urlsplit(self.path).query), cron=cron))
+        self.respond(*sync_app.start(config, query, cron=cron))
 
     def do_POST(self):
         config = Config.from_env()
@@ -42,11 +44,11 @@ class handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         self.respond(*sync_app.resume(config, self.rfile.read(length)))
 
-    def allowed(self, config) -> bool:
+    def allowed(self, config, train: bool = False) -> bool:
         if not config.cron_secret:
             self.respond(500, {"error": "CRON_SECRET is not set"})
             return False
-        if not sync_app.authorized(config, self.headers.get("Authorization")):
+        if not sync_app.authorized(config, self.headers.get("Authorization"), ingest_token_too=train):
             self.respond(401, {"error": "unauthorized"})
             return False
         return True

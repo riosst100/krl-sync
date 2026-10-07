@@ -112,3 +112,21 @@ def test_stop_closes_the_run_on_the_receiver(cfg, monkeypatch):
 
     assert status == 200 and body["run"]["status"] == "failed"
     assert closed == [(7, "failed", "Dihentikan dari halaman web.")]
+
+
+def test_train_stops_lookup_returns_the_parsed_stops(cfg, monkeypatch):
+    monkeypatch.setattr(app, "KciClient", lambda config, log: FakeKci(ROUTES))
+    status, body = app.start(cfg, {"train": ["5701c"]})
+
+    assert status == 200 and body["train_number"] == "5701C"
+    assert [s["station_code"] for s in body["stops"]] == ["THB", "BOO"]
+
+    assert app.start(cfg, {"train": ["57;01"]})[0] == 400
+
+
+def test_ingest_token_only_opens_the_train_lookup(cfg):
+    header = "Bearer t"  # cfg.ingest_token
+    assert app.authorized(cfg, header, ingest_token_too=True)
+    assert not app.authorized(cfg, header)
+    assert app.authorized(cfg, "Bearer s") and app.authorized(cfg, "Bearer s", ingest_token_too=True)
+    assert not app.authorized(cfg, "Bearer x", ingest_token_too=True)

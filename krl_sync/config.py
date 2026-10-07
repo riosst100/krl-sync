@@ -81,7 +81,9 @@ class Config:
     # What to sync: station codes (empty = every station KCI marks as enabled)
     # and which parts ("stations", "schedules", "trains").
     sync_stations: list[str] = field(default_factory=list)
-    sync_types: list[str] = field(default_factory=lambda: list(ALL_TYPES))
+    # Train stops are not synced by default: krl-app fetches a train's stops on
+    # demand (?train=) when its detail is opened.
+    sync_types: list[str] = field(default_factory=lambda: ["stations", "schedules"])
     # Whether Vercel Cron runs sync. krl-app's /ingest/config "auto_sync" overrides it.
     auto_sync: bool = True
 
@@ -115,7 +117,7 @@ class Config:
             rate_limit_pause_seconds=env_int("KCI_RATE_LIMIT_PAUSE_SECONDS", d.rate_limit_pause_seconds),
             impersonate=env("KCI_IMPERSONATE", d.impersonate) or d.impersonate,
             sync_stations=codes(env("KCI_SYNC_STATIONS")),
-            sync_types=types(env("KCI_SYNC_TYPES", ",".join(ALL_TYPES))),
+            sync_types=types(env("KCI_SYNC_TYPES", ",".join(d.sync_types))),
             auto_sync=env("AUTO_SYNC", "true").lower() not in ("0", "false", "off", "no"),
             ingest_url=env("INGEST_URL", d.ingest_url).rstrip("/"),
             ingest_token=env("INGEST_TOKEN"),

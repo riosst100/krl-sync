@@ -33,8 +33,8 @@ class Handler(SyncHandler):
             return super().do_POST()
         self.respond(404, {"error": "not found"})
 
-    def allowed(self, config) -> bool:
-        return True if NO_AUTH else super().allowed(config)
+    def allowed(self, config, train: bool = False) -> bool:
+        return True if NO_AUTH else super().allowed(config, train)
 
     def serve_index(self):
         with open(os.path.join(ROOT, "index.html"), "rb") as f:

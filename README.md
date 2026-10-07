@@ -33,6 +33,24 @@ Buka `https://<project>.vercel.app/`, lalu masuk dengan `CRON_SECRET`. Secret di
 - **Cek koneksi KCI**: 1 request stasiun + 1 request jadwal dari Vercel. Hasilnya
   menunjukkan apakah Vercel diblokir Cloudflare.
 
+## Stops kereta: diambil saat dibuka
+
+Sync harian hanya mengambil daftar stasiun dan jadwal tiap stasiun (sekitar satu request
+per stasiun). Stops kereta (stasiun yang dilewati) tidak ikut di-sync, karena jumlahnya
+ribuan request. krl-app mengambilnya saat pengguna membuka detail kereta:
+
+```
+krl-app GET /schedules/trains/5701C/stops
+  └─ stops 5701C hari ini sudah ada di DB? → langsung dari DB
+  └─ belum → GET krl-sync /api/sync?train=5701C (Bearer INGEST_TOKEN) → KCI → simpan ke DB
+```
+
+Kereta yang belum pernah dibuka hari ini memakai stops terakhirnya yang disalin ke hari ini
+(`carried_forward`), jadi pencarian rute A→B dan rute favorit tetap jalan. Salinan itu
+diganti data baru begitu keretanya dibuka. Kalau Vercel/KCI gagal, salinan itu yang
+ditampilkan. Untuk sync stops semua kereta sekaligus, centang *Pemberhentian kereta* di
+halaman web atau set `KCI_SYNC_TYPES=stations,schedules,trains`.
+
 ## Konfigurasi stasiun & sync otomatis
 
 Daftar stasiun **mengikuti setting admin krl-app** (Sinkronisasi → Sync Data → stasiun),
@@ -105,7 +123,7 @@ dan melanjutkan dari titik yang sama. Progres tiap langkah terlihat di **Vercel 
    | `INGEST_TOKEN` | token yang sama dengan `SYNC_INGEST_TOKEN` di backend krl-app |
    | `KCI_SYNC_STATIONS` | cadangan kalau `/ingest/config` tidak tersedia, mis. `THB`. Kosong = semua stasiun yang aktif di KCI (`fg_enable`) |
    | `AUTO_SYNC` | cadangan on/off sync otomatis (default `true`) |
-   | `KCI_SYNC_TYPES` | `stations,schedules,trains` (default) |
+   | `KCI_SYNC_TYPES` | `stations,schedules` (default). `trains` = ikut sync stops semua kereta |
 
 3. Deploy ulang setelah env diisi.
 
