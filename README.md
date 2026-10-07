@@ -156,45 +156,30 @@ Vercel bermasalah.
 
 ## Kontrak endpoint penerima (api-krl)
 
-api-krl **belum** punya endpoint ini. `POST /api/v1/ingest/start` saat ini membalas 404,
-karena endpoint lamanya dihapus di commit `2c1ab8d` krl-app. Kontraknya persis seperti
-`IngestController` lama, jadi bisa dikembalikan dari git:
+Endpoint ini ada di krl-app (`IngestController`, dikembalikan di commit `dd9e9a6`), dijaga
+middleware `ingest` dengan `SYNC_INGEST_TOKEN`.
 
-```bash
-cd ~/projects/krl-app
-git show 2c1ab8d^:backend/app/Http/Controllers/Api/V1/IngestController.php > backend/app/Http/Controllers/Api/V1/IngestController.php
-git show 2c1ab8d^:backend/app/Http/Middleware/EnsureIngestToken.php      > backend/app/Http/Middleware/EnsureIngestToken.php
-# + route group 'ingest' di routes/api.php, alias middleware 'ingest',
-#   dan config('kci.ingest_token') = env('SYNC_INGEST_TOKEN')
-```
+**Tidak ada truncate.** Saat `start`, krl-app menyalin jadwal terakhir tiap stasiun (dan stops
+tiap kereta) ke tanggal run kalau tanggal itu belum punya data. Setiap push hanya mengganti
+yang dikirim: jadwal satu stasiun di tanggal itu, atau stops satu kereta. `finish` tidak
+menghapus apa pun. Stasiun atau kereta yang gagal di-sync tetap memakai data lama. Command
+`schedules:carry-forward` di krl-app melakukan hal yang sama setiap hari pukul 00:01 WIB,
+jadi data tetap ada walau Vercel tidak jalan.
 
 Semua request memakai JSON dan `Authorization: Bearer <INGEST_TOKEN>`. Urutannya:
 
 | # | Endpoint | Body | Balasan yang diharapkan |
 | --- | --- | --- | --- |
-| 0 | `GET config` (baru, **opsional**) | – | `{"data":{"stations":["THB","SUD"],"auto_sync":true}}`. Kalau gagal atau tidak ada, dipakai env |
+| 0 | `GET config` (**opsional**) | – | `{"data":{"stations":["THB","SUD"],"auto_sync":true}}`. Kalau gagal atau tidak ada, dipakai env |
 | 1 | `stations` (per 200 baris, kalau `stations` di-sync) | `{"stations":[{"code":"THB","name":"Tanah Abang","operational_area":0,"kci_enabled":true,"is_active":true}]}` | 2xx |
 | 2 | `start` | `{"date":"2026-10-06","stations":["THB"]}` | `201 {"data":{"run_id":123}}`, atau **409** kalau sedang ada sync |
 | 3 | `schedules` (sekali per stasiun) | `{"run_id":123,"date":"…","station":"THB","schedules":[{"train_number":"5701C","line_name":"COMMUTER LINE CIKARANG","line_color":"#0084D8","route_name":"KAMPUNGBANDAN-CIKARANG","destination":"CIKARANG","departure_time":"04:31:00","destination_arrival_time":"05:40:00"}]}` | 2xx. **422** = stasiun itu dilewati (dicatat gagal), run tetap jalan |
 | 4 | `stops` (per ≤8 kereta) | `{"run_id":123,"date":"…","trains":[{"train_number":"5701C","stops":[{"station_code":"THB","time":"04:31:00","is_transit":false}]}]}` | 2xx |
 | 5 | `finish` | `{"run_id":123,"date":"…","status":"success\|partial\|failed","stations":["THB"],"error":null}` | 2xx |
 
-Endpoint `config` belum pernah ada di krl-app. Contoh implementasinya di `IngestController`:
-
-```php
-public function config(): JsonResponse
-{
-    $codes = ScheduleSyncService::syncStationCodes(); // setting admin "stasiun yang di-sync"
-
-    return response()->json(['data' => [
-        // kirim daftar eksplisit: kosong di krl-app = semua stasiun aktif di database krl-app
-        'stations' => $codes ?: Station::active()->orderBy('code')->pluck('code')->all(),
-        // mis. setting baru 'kci.vercel_auto_sync' yang bisa di-toggle dari admin
-        'auto_sync' => filter_var(Setting::value('kci.vercel_auto_sync', 'true'), FILTER_VALIDATE_BOOL),
-    ]]);
-}
-// routes/api.php, di group 'ingest': Route::get('config', [V1\IngestController::class, 'config'])->name('config');
-```
+`config` mengembalikan setting admin "stasiun yang di-sync" (kosong = semua stasiun aktif)
+dan `auto_sync` dari setting `kci.ingest_auto_sync` (default `true`). Belum ada tombolnya di
+admin. Untuk sementara ubah lewat tinker: `Setting::put(Setting::INGEST_AUTO_SYNC, 'false')`.
 
 `destination` dikirim apa adanya dari KCI (`JAKARTAKOTA`). Penerima memetakannya ke nama
 stasiun (`ScheduleSyncService::persist`). Untuk 5xx atau error koneksi, request dicoba
