@@ -161,8 +161,9 @@ middleware `ingest` dengan `SYNC_INGEST_TOKEN`.
 
 **Tidak ada truncate.** Saat `start`, krl-app menyalin jadwal terakhir tiap stasiun (dan stops
 tiap kereta) ke tanggal run kalau tanggal itu belum punya data. Setiap push hanya mengganti
-yang dikirim: jadwal satu stasiun di tanggal itu, atau stops satu kereta. `finish` tidak
-menghapus apa pun. Stasiun atau kereta yang gagal di-sync tetap memakai data lama. Command
+yang dikirim: jadwal satu stasiun (tanggal itu dan tanggal-tanggal lama stasiun itu), atau
+stops satu kereta. Stasiun dan kereta lain tidak disentuh, dan `finish` tidak menghapus apa
+pun. Aturan yang sama berlaku untuk semua sumber sync di krl-app. Stasiun atau kereta yang gagal di-sync tetap memakai data lama. Command
 `schedules:carry-forward` di krl-app melakukan hal yang sama setiap hari pukul 00:01 WIB,
 jadi data tetap ada walau Vercel tidak jalan.
 
