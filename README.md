@@ -17,8 +17,8 @@ Halaman web (manual)  ──┴─► /api/sync ─► kci.id (curl_cffi, sidik 
 
 ## Halaman web (`/`)
 
-Buka `https://<project>.vercel.app/`, lalu masuk dengan `CRON_SECRET`. Secret disimpan di
-`sessionStorage` tab itu saja.
+Buka `https://<project>.vercel.app/`, lalu masuk dengan `CRON_SECRET`. Secret diingat di
+browser itu (`localStorage`) sampai menekan *Keluar*, jadi berikutnya halaman langsung terbuka.
 
 - **Konfigurasi**: stasiun yang di-sync dan sumbernya (setting admin krl-app, atau env
   cadangan), status dan jadwal sync otomatis, jenis data, serta tujuan pengiriman.

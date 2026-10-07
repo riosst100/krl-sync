@@ -148,11 +148,14 @@ let watching = null;   // run id of the background run being followed
 const POLL_MS = 5000;
 const STALE_MS = 10 * 60 * 1000;  // no progress for this long: the chain probably broke
 
+// The secret is remembered in this browser (until "Keluar"), so the page opens
+// straight away next time; other browsers still need it.
 function store(value) {
-  try { value ? sessionStorage.setItem("krl-sync-secret", value) : sessionStorage.removeItem("krl-sync-secret"); } catch {}
+  try { value ? localStorage.setItem("krl-sync-secret", value) : localStorage.removeItem("krl-sync-secret"); } catch {}
+  try { sessionStorage.removeItem("krl-sync-secret"); } catch {}
 }
 function stored() {
-  try { return sessionStorage.getItem("krl-sync-secret") || ""; } catch { return ""; }
+  try { return localStorage.getItem("krl-sync-secret") || sessionStorage.getItem("krl-sync-secret") || ""; } catch { return ""; }
 }
 
 async function api(query = "", body = null) {
