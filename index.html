@@ -103,6 +103,7 @@
         <div>
           <label>Mode</label>
           <div class="checks"><label><input type="checkbox" id="dry"> Dry run (ambil dari KCI saja, tidak dikirim)</label></div>
+          <p class="muted" style="margin:.4rem 0 0">Sync biasa jalan di background: tab boleh ditutup, progres tetap terlihat saat halaman dibuka lagi. Dry run butuh tab tetap terbuka.</p>
         </div>
       </div>
       <div class="actions">
@@ -143,6 +144,9 @@ const $ = (id) => document.getElementById(id);
 let secret = "";
 let running = false;
 let stopRequested = false;
+let watching = null;   // run id of the background run being followed
+const POLL_MS = 5000;
+const STALE_MS = 10 * 60 * 1000;  // no progress for this long: the chain probably broke
 
 function store(value) {
   try { value ? sessionStorage.setItem("krl-sync-secret", value) : sessionStorage.removeItem("krl-sync-secret"); } catch {}
@@ -227,10 +231,15 @@ async function runSync() {
   const types = [...document.querySelectorAll("input[name=type]:checked")].map((c) => c.value);
   if (!types.length) return alert("Pilih minimal satu jenis data.");
 
-  const params = new URLSearchParams({ chain: "0", budget: String(BUDGET), types: types.join(",") });
+  const params = new URLSearchParams({ types: types.join(",") });
   if ($("stations").value.trim()) params.set("stations", $("stations").value.trim());
   if ($("limit").value) params.set("limit_trains", $("limit").value);
-  if ($("dry").checked) params.set("dry", "1");
+  if (!$("dry").checked) return runBackground(params, types);
+
+  // Dry run: nothing is opened on api-krl to follow, so this tab drives the steps.
+  params.set("dry", "1");
+  params.set("chain", "0");
+  params.set("budget", String(BUDGET));
 
   setRunning(true);
   stopRequested = false;
@@ -264,6 +273,115 @@ async function runSync() {
   }
 }
 
+// A real sync runs in the background on Vercel (like the cron): this tab only
+// starts it and follows its progress on api-krl. Closing the tab does not stop it.
+async function runBackground(params, types) {
+  params.set("background", "1");
+  setRunning(true);
+  $("log").textContent = "";
+  log(`Memulai sync di background: ${types.join(", ")}`);
+
+  try {
+    const r = await api("?" + params);
+    show(r);
+    if (r.phase === "done") {
+      log(`Selesai: ${r.status}${r.error ? " — " + r.error : ""}`);
+      return setRunning(false);
+    }
+    log(`Run #${r.run_id} berjalan di background (${r.continued}). Tab ini boleh ditutup.`);
+    watch(r.run_id);
+  } catch (e) {
+    log(`Error: ${e.message}`);
+    $("error").textContent = e.message;
+    $("error").classList.remove("hidden");
+    setRunning(false);
+    if (e.auth) logout();
+  }
+}
+
+function showRun(run) {
+  const p = run.progress;
+  const finished = run.status !== "running";
+  if (p) {
+    show({ ...p, status: finished ? run.status : null, error: run.error || p.error });
+  } else {
+    show({ phase: finished ? "done" : "stations", percent: finished ? 100 : 1, run_id: run.run_id,
+      status: finished ? run.status : null, error: run.error,
+      progress: { stations: "-", trains: "-" },
+      stats: { stations: 0, stations_ok: 0, schedules: 0, trains: 0, trains_ok: 0, stops: 0, kci_requests: 0 } });
+  }
+  const stale = !finished && run.reported_at && Date.now() - Date.parse(run.reported_at) > STALE_MS;
+  if (stale) {
+    $("error").textContent = "Tidak ada kabar dari run ini lebih dari 10 menit. Cek Vercel → Logs; mungkin rantai invocation terputus.";
+    $("error").classList.remove("hidden");
+  }
+}
+
+async function watch(runId) {
+  watching = runId;
+  setRunning(true);
+  let last = "";
+  while (watching === runId) {
+    let run;
+    try {
+      run = (await api("?status=1")).run;
+    } catch (e) {
+      log(`Gagal membaca status: ${e.message}`);
+      if (e.auth) return logout();
+      await new Promise((ok) => setTimeout(ok, POLL_MS));
+      continue;
+    }
+    if (!run || run.run_id !== runId) {
+      await new Promise((ok) => setTimeout(ok, POLL_MS));
+      continue;
+    }
+    showRun(run);
+    const p = run.progress;
+    const line = p ? `${PHASES[p.phase] || p.phase} · stasiun ${p.progress.stations} · kereta ${p.progress.trains}` : "Memulai…";
+    if (line !== last) { log(line); last = line; }
+    if (run.status !== "running") {
+      log(`Selesai: ${run.status}${run.error ? " — " + run.error : ""}`);
+      break;
+    }
+    await new Promise((ok) => setTimeout(ok, POLL_MS));
+  }
+  if (watching === runId) { watching = null; setRunning(false); }
+}
+
+// On opening the page: follow a run that is already going (manual or cron).
+async function resumeWatch() {
+  try {
+    const run = (await api("?status=1")).run;
+    if (!run) return;
+    $("log").textContent = "";
+    showRun(run);
+    if (run.status === "running") {
+      log(`Run #${run.run_id} sedang berjalan di background.`);
+      watch(run.run_id);
+    } else {
+      log(`Run terakhir #${run.run_id}: ${run.status}${run.error ? " — " + run.error : ""}`);
+    }
+  } catch {}
+}
+
+async function stopRun() {
+  if (watching) {
+    if (!confirm(`Hentikan run #${watching}? Data yang sudah terkirim tetap tersimpan.`)) return;
+    $("stop").disabled = true;
+    try {
+      await api("", { stop_run: watching });
+      log("Run dihentikan. Vercel berhenti di langkah berikutnya.");
+    } catch (e) {
+      log(`Gagal menghentikan: ${e.message}`);
+      $("stop").disabled = false;
+    }
+    return;
+  }
+  stopRequested = true;
+  $("stop").disabled = true;
+  log("Akan dihentikan setelah langkah ini selesai…");
+}
+
 async function runCheck() {
   setRunning(true);
   $("stop").classList.add("hidden");
@@ -293,6 +411,7 @@ async function login(value) {
     $("login").classList.add("hidden");
     $("app").classList.remove("hidden");
     $("logout").classList.remove("hidden");
+    resumeWatch();
   } catch (e) {
     secret = "";
     store("");
@@ -302,6 +421,7 @@ async function login(value) {
 }
 
 function logout() {
+  watching = null;
   secret = "";
   store("");
   $("app").classList.add("hidden");
@@ -313,8 +433,9 @@ $("login-form").addEventListener("submit", (e) => { e.preventDefault(); login($(
 $("logout").addEventListener("click", logout);
 $("run").addEventListener("click", runSync);
 $("check").addEventListener("click", runCheck);
-$("stop").addEventListener("click", () => { stopRequested = true; $("stop").disabled = true; log("Akan dihentikan setelah langkah ini selesai…"); });
-window.addEventListener("beforeunload", (e) => { if (running) { e.preventDefault(); e.returnValue = ""; } });
+$("stop").addEventListener("click", stopRun);
+// Only a dry run lives in this tab; a background run goes on without it.
+window.addEventListener("beforeunload", (e) => { if (running && !watching) { e.preventDefault(); e.returnValue = ""; } });
 
 if (stored()) login(stored());
 </script>

@@ -108,6 +108,14 @@ class IngestClient:
         self.post("stops", {"run_id": run_id, "date": date, "trains": trains})
         return sum(len(t["stops"]) for t in trains)
 
+    def progress(self, run_id: int, progress: dict) -> str:
+        """Reports progress for the page; returns the run's status ("running" = go on)."""
+        return str(self.request("POST", "progress", {"run_id": run_id, "progress": progress}, retries=1)["data"]["status"])
+
+    def latest(self) -> dict | None:
+        """The most recent run on the receiver, with its last reported progress."""
+        return self.request("GET", "runs/latest", retries=1).get("data")
+
     def finish(self, run_id: int, date: str, status: str, stations: list[str], error: str | None = None) -> None:
         self.post("finish", {
             "run_id": run_id,
@@ -140,6 +148,9 @@ class DryIngest:
         count = sum(len(t["stops"]) for t in trains)
         self.log(f"[dry] stops: {len(trains)} train(s), {count} stop(s)")
         return count
+
+    def progress(self, run_id, progress):
+        return "running"
 
     def finish(self, run_id, date, status, stations, error=None):
         self.log(f"[dry] finish: {status}" + (f" ({error})" if error else ""))

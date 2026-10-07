@@ -23,10 +23,13 @@ Buka `https://<project>.vercel.app/`, lalu masuk dengan `CRON_SECRET`. Secret di
 - **Konfigurasi**: stasiun yang di-sync dan sumbernya (setting admin krl-app, atau env
   cadangan), status dan jadwal sync otomatis, jenis data, serta tujuan pengiriman.
 - **Sync manual**: tombol *Sync sekarang*, dengan opsi stasiun (kosong = ikut
-  konfigurasi), jenis data, batas kereta untuk uji, dan *dry run*. Browser menjalankan
-  sync per langkah (sekitar 25 detik kerja per request), sehingga progress bar,
-  statistik, dan log terlihat langsung. *Hentikan* menutup run di api-krl dengan status
-  `failed`. Tab harus tetap terbuka sampai selesai.
+  konfigurasi), jenis data, batas kereta untuk uji, dan *dry run*. Sync biasa **jalan di
+  background** seperti cron (`?background=1`): Vercel membuka run di api-krl, lalu rantai
+  invocation melanjutkannya sendiri. Tab boleh ditutup. Progres dilaporkan ke api-krl
+  (`POST /ingest/progress`) setiap langkah, dan halaman membacanya tiap 5 detik
+  (`?status=1` → `GET /ingest/runs/latest`), termasuk run dari cron. *Hentikan* menutup run
+  di api-krl dengan status `failed`; Vercel berhenti di langkah berikutnya. *Dry run* tidak
+  membuat run di api-krl, jadi tetap dijalankan per langkah oleh browser (tab harus terbuka).
 - **Cek koneksi KCI**: 1 request stasiun + 1 request jadwal dari Vercel. Hasilnya
   menunjukkan apakah Vercel diblokir Cloudflare.
 

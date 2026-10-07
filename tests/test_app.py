@@ -89,3 +89,26 @@ def test_authorized(cfg):
     assert app.authorized(cfg, "Bearer s")
     assert not app.authorized(cfg, "Bearer x")
     assert not app.authorized(Config(), "Bearer ")
+
+
+def test_background_returns_once_the_run_is_open_and_hands_over(cfg, monkeypatch, fakes):
+    settings(monkeypatch, {"stations": ["THB", "SUD"]})
+    handed = []
+    monkeypatch.setattr(app, "continue_run", lambda config, state: handed.append(state) or "next invocation started")
+
+    status, body = app.start(cfg, {"background": ["1"]})
+
+    assert status == 200 and body["run_id"] == 42 and body["continued"] == "next invocation started"
+    assert handed and handed[0]["phase"] == "schedules", "nothing synced yet: the chain does the work"
+    assert [c[0] for c in fakes.calls] == ["stations", "start"]
+
+
+def test_stop_closes_the_run_on_the_receiver(cfg, monkeypatch):
+    closed = []
+    monkeypatch.setattr(IngestClient, "finish", lambda self, run_id, date, status, stations, error=None: closed.append((run_id, status, error)))
+    monkeypatch.setattr(IngestClient, "latest", lambda self: {"run_id": 7, "status": "failed"})
+
+    status, body = app.resume(cfg, json.dumps({"stop_run": 7}).encode())
+
+    assert status == 200 and body["run"]["status"] == "failed"
+    assert closed == [(7, "failed", "Dihentikan dari halaman web.")]

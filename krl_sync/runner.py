@@ -58,14 +58,22 @@ class Runner:
         self.sleep = sleep
         self.clock = clock
 
-    def run(self, state: dict, deadline: float | None = None) -> dict:
-        """Works on the run until it is done or the deadline (clock value) has passed."""
+    def run(self, state: dict, deadline: float | None = None, until=None) -> dict:
+        """
+        Works on the run until it is done, the deadline (clock value) has passed,
+        or until(state) is true.
+        """
         state["stats"]["invocations"] += 1
         before = self.kci.requests
 
         try:
             while state["phase"] != "done" and (deadline is None or self.clock() < deadline):
                 getattr(self, f"phase_{state['phase']}")(state)
+                state["stats"]["kci_requests"] += self.kci.requests - before
+                before = self.kci.requests
+                self.report(state)
+                if until and until(state):
+                    break
         except IngestConflict as e:
             state.update(phase="done", status="skipped", error=f"The receiver is already running a synchronization ({e})")
         except (KciError, IngestError) as e:
@@ -79,6 +87,24 @@ class Runner:
             self.log(f"run {state['run_id']} {state['status']}" + (f": {state['error']}" if state["error"] else ""))
 
         return state
+
+    def report(self, state: dict) -> None:
+        """
+        Progress to the receiver after each step (the page shows it). A run the
+        receiver no longer has running (stopped from the page) ends here.
+        """
+        if state["dry"] or state["run_id"] is None or state["phase"] in ("finish", "done"):
+            return
+
+        try:
+            status = self.ingest.progress(state["run_id"], summary(state))
+        except IngestError as e:
+            self.log(f"progress report failed: {e}")
+            return
+
+        if status != "running":
+            self.log(f"run {state['run_id']} is {status} on the receiver, stopping")
+            state.update(phase="done", status=status, error=state["error"] or "Dihentikan.")
 
     def fail(self, state: dict, message: str) -> None:
         self.log(f"sync failed: {message}")

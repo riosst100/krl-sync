@@ -54,10 +54,16 @@ class FakeKci:
 
 
 class FakeIngest:
-    def __init__(self, conflict=False, reject=()):
+    def __init__(self, conflict=False, reject=(), stopped_after=None):
         self.calls = []
         self.conflict = conflict
         self.reject = reject
+        self.reports = []
+        self.stopped_after = stopped_after  # the receiver says "failed" from this report on
+
+    def progress(self, run_id, progress):
+        self.reports.append(progress)
+        return "failed" if self.stopped_after and len(self.reports) >= self.stopped_after else "running"
 
     def stations(self, rows):
         self.calls.append(("stations", [r["code"] for r in rows]))
@@ -284,3 +290,21 @@ def test_pacer_off():
     p = pacer(clock, request_delay_ms=0, break_seconds=0)
     requests_through(p, clock, 5)
     assert clock.slept == []
+
+
+def test_progress_is_reported_after_each_step():
+    ingest = FakeIngest()
+    state, calls = run(ingest=ingest)
+
+    assert state["status"] == "success"
+    assert ingest.reports, "the page gets progress"
+    assert all(r["run_id"] == 42 for r in ingest.reports)
+    assert ingest.reports[-1]["phase"] in ("stops", "finish")
+
+
+def test_a_run_stopped_on_the_receiver_ends_without_closing_it_again():
+    ingest = FakeIngest(stopped_after=2)
+    state, calls = run(ingest=ingest)
+
+    assert state["phase"] == "done" and state["status"] == "failed"
+    assert not [c for c in calls if c[0] == "finish"], "the receiver already closed it"

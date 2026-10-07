@@ -104,11 +104,15 @@ def start(config, query: dict, cron: bool = False) -> tuple[int, dict]:
 
     ?dry=1 &types= &stations= &limit_trains=   what to sync
     ?chain=0 &budget=N                         manual: return the state instead of continuing
+    ?background=1                              manual: return once the run is open, it goes on by itself
+    ?status=1                                  the receiver's latest run and its progress
     """
     first = lambda name: (query.get(name) or [""])[0].strip()
 
     if first("info") in ("1", "true"):
         return 200, info(config)
+    if first("status") in ("1", "true"):
+        return latest_run(config)
     if first("check") in ("1", "true"):
         return 200, check(config, first("station") or (config.sync_stations or ["THB"])[0])
 
@@ -132,13 +136,21 @@ def start(config, query: dict, cron: bool = False) -> tuple[int, dict]:
     state["stations_source"] = source
     state["trigger"] = "schedule" if cron else "manual"
 
+    if first("background") in ("1", "true") and not state["dry"]:
+        return work(config, state, until_open=True)
+
     return work(config, state, chain=first("chain") not in ("0", "false"), budget=first("budget"))
 
 
 def resume(config, body: bytes) -> tuple[int, dict]:
-    """POST {"state": {...}, "chain": bool, "budget": N, "abort": bool}: the next step of a run."""
+    """
+    POST {"state": {...}, "chain": bool, "budget": N, "abort": bool}: the next step of a run.
+    POST {"stop_run": 123}: stop a background run (closed as failed; it stops at its next step).
+    """
     try:
         data = json.loads(body)
+        if isinstance(data, dict) and "stop_run" in data:
+            return stop_run(config, data["stop_run"])
         state = data["state"]
         state["phase"]
     except (ValueError, KeyError, TypeError):
@@ -158,7 +170,23 @@ def ingest_for(config, state):
     return DryIngest(log) if state["dry"] else IngestClient(config.ingest_url, config.ingest_token, log)
 
 
-def work(config, state: dict, chain: bool = True, budget: str = "") -> tuple[int, dict]:
+def latest_run(config) -> tuple[int, dict]:
+    try:
+        return 200, {"run": IngestClient(config.ingest_url, config.ingest_token, log).latest()}
+    except IngestError as e:
+        return 502, {"error": str(e)}
+
+
+def stop_run(config, run_id) -> tuple[int, dict]:
+    try:
+        ingest = IngestClient(config.ingest_url, config.ingest_token, log)
+        ingest.finish(int(run_id), cfg_module.today(), "failed", [], "Dihentikan dari halaman web.")
+        return 200, {"run": ingest.latest()}
+    except (IngestError, ValueError, TypeError) as e:
+        return 502, {"error": str(e)}
+
+
+def work(config, state: dict, chain: bool = True, budget: str = "", until_open: bool = False) -> tuple[int, dict]:
     seconds = config.time_budget_seconds
     if budget.isdigit():
         seconds = max(5, min(int(budget), seconds))
@@ -172,7 +200,9 @@ def work(config, state: dict, chain: bool = True, budget: str = "") -> tuple[int
     kci = KciClient(config, log)
     # A long break may run past the budget a little, never into Vercel's 300 s limit.
     kci.pacer.not_after = deadline + 30
-    state = Runner(config, kci, ingest, log).run(state, deadline)
+    # Background: only until the receiver has opened the run, then the chain takes over.
+    until = (lambda s: s["run_id"] is not None) if until_open else None
+    state = Runner(config, kci, ingest, log).run(state, deadline, until)
     result = summary(state)
 
     if state["phase"] != "done":
